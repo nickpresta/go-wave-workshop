@@ -2,28 +2,31 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+
+	"github.com/NickPresta/go-wave-workshop/services"
 )
 
 const serviceURL = "http://jsonrates.com/convert/"
-const apiKey = "jr-104352fe815d7a92c683578c60fcb877"
 
-// Conversion is a convert result
-type Conversion struct {
-	Amount string `json:"amount,omitempty"`
-	From   string `json:"from,omitempty"`
-	To     string `json:"to,omitempty"`
-	Error  string `json:"error,omitempty"`
+var apiKey string
+
+func init() {
+	apiEnv := os.Getenv("API_KEY")
+	if apiEnv == "" {
+		apiEnv = "jr-104352fe815d7a92c683578c60fcb877"
+	}
+	apiKey = apiEnv
 }
 
-// RequestPayload is my payload
+// RequestPayload is the payload submitted with a conversion request
 type RequestPayload struct {
-	Amount string `json:"amount,omitempty"`
-	From   string `json:"from,omitempty"`
-	To     string `json:"to,omitempty"`
+	Amount string `json:"amount"`
+	From   string `json:"from"`
+	To     string `json:"to"`
 }
 
 func main() {
@@ -31,51 +34,35 @@ func main() {
 	log.Fatal(http.ListenAndServe(":12345", nil))
 }
 
-// ConvertHandler is my handler
+// ConvertHandler handles conversion requests
 func ConvertHandler(w http.ResponseWriter, req *http.Request) {
 	var body RequestPayload
 	decoder := json.NewDecoder(req.Body)
-	defer req.Body.Close()
 
 	err := decoder.Decode(&body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), 500)
 		return
 	}
 
-	amount, _ := strconv.ParseFloat(body.Amount, 64)
-	converted, _ := Convert(body.From, body.To, amount)
+	amount, err := strconv.ParseFloat(body.Amount, 64)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	converter := services.NewConverter(apiKey, serviceURL)
+	converted, err := converter.Convert(amount, body.From, body.To)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	w.Header().Add("Content-type", "application/json")
 	encoder := json.NewEncoder(w)
 	err = encoder.Encode(converted)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), 500)
 		return
 	}
-}
-
-func doRequest(from, to string, amount float64) (Conversion, error) {
-	query := fmt.Sprintf(
-		"amount=%f&from=%s&to=%s&apiKey=%s",
-		amount,
-		from,
-		to,
-		apiKey,
-	)
-	resp, _ := http.Get(serviceURL + "?" + query)
-	defer resp.Body.Close()
-
-	var conversion Conversion
-	decoder := json.NewDecoder(resp.Body)
-	err := decoder.Decode(&conversion)
-	if err != nil {
-		return Conversion{}, err
-	}
-	return conversion, nil
-}
-
-// Convert takes an amount and converts it from to to
-func Convert(from string, to string, amount float64) (Conversion, error) {
-	return doRequest(from, to, amount)
 }
